@@ -1,0 +1,567 @@
+---
+title: "Mali_Data_Analysis"
+author: "Winnie Kulei"
+date: "Date ~ `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true 
+    toc_depth: 6
+    number_sections: true
+    theme: united
+    highlight: tango
+    
+---
+
+<style type="text/css">
+
+h1.title {
+  font-size: 20px;
+  color: Blue;
+  text-align: center;
+}
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 16px;
+  font-family: "Source Sans Pro Semibold", Times, serif;
+  color: Blue;
+  text-align: center;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 16px;
+  font-family: "Source Sans Pro Semibold", Times, serif;
+  color: Blue;
+  text-align: center;
+}
+</style>
+
+
+
+</br>
+
+</br>
+
+
+***
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,error = T)
+
+#Clear the memory
+rm(list  =  ls())
+
+#Import packages
+library(tidyverse)
+library(readxl)
+library(magrittr)
+library(broom)
+library(quickr)
+library(wordstonumbers)
+```
+
+# List Selected Sectors in Mali
+
+```{r}
+
+sectors <- c("Bougouni", "Koutiala", "Sikasso")
+
+
+```
+# Single Phase Product {.tabset}
+
+## Read Excel files containing data
+
+```{r}
+
+monthlyrf_files <- list.files(path = "C:\\Users\\Winnie Kulei\\Documents\\DAVU AI\\Mali_JJA_Monthly_summary", pattern = "*.xls", full.names = T)
+mali_monthly_data <- setNames(sapply(monthlyrf_files, read_excel, simplify = F), sectors) %>%
+  bind_rows(.id =  "Stations")
+glimpse(mali_monthly_data)
+
+```
+### Calculate total in-season rainfall
+
+```{r}
+
+mali_monthly_data <- mali_monthly_data %>%
+  mutate(Total_rain = select(., Jun:Sep) %>% apply(1, sum, na.rm = T))
+
+
+#Drop the months columns
+mali_monthly_data <- mali_monthly_data %>% select(-Jun, -Jul, -Aug, -Sep)
+
+
+#Rearrange columns
+mali_monthly_data %<>%
+  select(Stations,Years, Total_rain, Yield) %>%
+  arrange(Stations, Years)
+glimpse(mali_monthly_data)
+
+```
+
+## Time series plots per sector
+
+```{r}
+
+monthlyrf_plot <- ggplot(mali_monthly_data, aes(x = Years))
+monthlyrf_plot <- monthlyrf_plot + geom_line(aes(y = Total_rain, color = "Rainfall")) + geom_line(aes(y = Yield, color = "Yield")) + facet_wrap(facets = vars(Stations))
+monthlyrf_plot
+
+```
+
+Drop rows with missing values
+
+```{r}
+
+mali_monthly_data <- mali_monthly_data %>% drop_na()
+```
+
+## Functions
+```{r}
+SatisfactionIndex1 <- function(Payout_diff){
+  return((1 - Payout_diff) * 10)
+}
+
+RiskPremium <- function(Total_payout,Years){
+  return(Total_payout/Years)
+}
+
+```
+## Sector linear regression and contract evaluation {.tabset}
+
+### Bougouni
+```{r}
+
+mali_monthly_data_bougouni <- mali_monthly_data %>% filter(Stations == "Bougouni", between(Years, 1990,2013))
+dim(mali_monthly_data_bougouni)
+
+mean_yield_bougouni <- mean(mali_monthly_data_bougouni$Yield)
+
+mali_monthly_data_bougouni$Yield_loss <- ifelse(mali_monthly_data_bougouni$Yield >= mean_yield_bougouni, 0, (mean_yield_bougouni - mali_monthly_data_bougouni$Yield) / mean_yield_bougouni*100)
+
+plot_bougouni <- ggplot(mali_monthly_data_bougouni, aes(x = Total_rain, y = Yield_loss)) +geom_point() + geom_smooth(method = "lm")
+plot_bougouni
+
+linear_mod_bougouni <- lm(Yield_loss~Total_rain, data = mali_monthly_data_bougouni)
+summary(linear_mod_bougouni)
+plot(linear_mod_bougouni)
+
+mali_monthly_data_bougouni <- mali_monthly_data_bougouni[-c(1,2,6),]
+dim(mali_monthly_data_bougouni)
+
+linear_mod_bougouni <- lm(Yield_loss~Total_rain, data = mali_monthly_data_bougouni)
+plot(linear_mod_bougouni)
+
+mod_res_bougouni1 = tidy(linear_mod_bougouni) %>% 
+  mutate(Sig_at_95_CI = ifelse(p.value < 0.05, "Significant","Not significant"),
+       Sig_at_90_CI = ifelse(p.value < 0.1, "Significant","Not significant"),
+       estimate = round(estimate,2),
+         std.error = round(std.error,2),
+         statistic = round(statistic,2),
+         p.value = round(p.value,2)) %>% 
+  arrange(desc(Sig_at_95_CI)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_bougouni1,names(mod_res_bougouni1))
+
+mod_res_bougouni2 <- glance(linear_mod_bougouni) %>%
+  transmute(r.squared = round(r.squared,2),
+            adj.r.squared = round(adj.r.squared,2)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_bougouni2,names(mod_res_bougouni2))
+
+
+
+
+# Contract evaluation
+
+intercept_bougouni <- linear_mod_bougouni$coefficients[1]
+mod_coef_bougouni <- linear_mod_bougouni$coefficients[2]
+
+rain_at_zero_loss_bougouni <- as.numeric(-intercept_bougouni/mod_coef_bougouni)
+rain_at_zero_loss_bougouni
+
+rain_at_max_loss_bougouni <- mali_monthly_data_bougouni$Total_rain[14]
+rain_at_max_loss_bougouni
+  
+max_loss_bougouni <- as.numeric(mod_coef_bougouni*rain_at_max_loss_bougouni + intercept_bougouni)
+  
+payout_rate_bougouni <- 100/(rain_at_zero_loss_bougouni - rain_at_max_loss_bougouni)
+payout_rate_bougouni
+
+
+contract_bougouni <- mali_monthly_data_bougouni %>%
+  mutate(Actual_payout = ifelse(mali_monthly_data_bougouni$Total_rain >= rain_at_zero_loss_bougouni, 0, (rain_at_zero_loss_bougouni -mali_monthly_data_bougouni$Total_rain) * payout_rate_bougouni)) %>%
+  mutate(Actual_payout = ifelse(Actual_payout >= 100, 100, Actual_payout)) %>%
+  mutate(Payout_diff = abs(Actual_payout - Yield_loss)/ 100) %>%
+  mutate(Sat_index = SatisfactionIndex1(Payout_diff))
+
+glimpse(contract_bougouni)
+
+sat_index_bougouni <- mean(contract_bougouni$Sat_index)
+sat_index_bougouni
+
+```
+$$y = -0.0113x + 12.3907$$
+
+Outliers removed
+
+```{r}
+
+mali_monthly_data_bougouni <- mali_monthly_data_bougouni[-c(1,2,6),]
+dim(mali_monthly_data_bougouni2)
+
+mean_yield_bougouni2 <- mean(mali_monthly_data_bougouni2$Yield)
+mean_yield_bougouni2
+#median(mali_monthly_data_bougouni2$Yield)
+
+mali_monthly_data_bougouni2$Yield_loss <- ifelse(mali_monthly_data_bougouni2$Yield >= mean_yield_bougouni2,0, (mean_yield_bougouni2 - mali_monthly_data_bougouni2$Yield) / mean_yield_bougouni2*100)
+
+linear_mod_bougouni2 <- lm(Yield_loss~Total_rain, data = mali_monthly_data_bougouni2)
+#summary(linear_mod_bougouni2)
+plot(linear_mod_bougouni2)
+
+mod_res_bougouni1 = tidy(linear_mod_bougouni2) %>% 
+  mutate(Sig_at_95_CI = ifelse(p.value < 0.05, "Significant","Not significant"),
+       Sig_at_90_CI = ifelse(p.value < 0.1, "Significant","Not significant"),
+       estimate = round(estimate,2),
+         std.error = round(std.error,2),
+         statistic = round(statistic,2),
+         p.value = round(p.value,2)) %>% 
+  arrange(desc(Sig_at_95_CI)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_bougouni1,names(mod_res_bougouni1))
+
+mod_res_bougouni2 <- glance(linear_mod_bougouni2) %>%
+  transmute(r.squared = round(r.squared,2),
+            adj.r.squared = round(adj.r.squared,2)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_bougouni2,names(mod_res_bougouni2))
+
+plot_bougouni2 <- ggplot(mali_monthly_data_bougouni2, aes(x = Total_rain, y = Yield_loss)) +geom_point() + geom_smooth(method = "lm")
+plot_bougouni2
+
+
+# Contract evaluation
+
+intercept_bougouni2 <- linear_mod_bougouni2$coefficients[1]
+mod_coef_bougouni2 <- linear_mod_bougouni2$coefficients[2]
+
+rain_at_zero_loss_bougouni2 <- as.numeric(-intercept_bougouni2/mod_coef_bougouni2)
+rain_at_zero_loss_bougouni2
+
+rain_at_max_loss_bougouni2 <- mali_monthly_data_bougouni2$Total_rain[14]
+  
+max_loss_bougouni2 <- as.numeric(mod_coef_bougouni2*rain_at_max_loss_bougouni2 + intercept_bougouni2)
+  
+payout_rate_bougouni2 <- 100/(rain_at_zero_loss_bougouni2 - rain_at_max_loss_bougouni2)
+payout_rate_bougouni2
+
+
+contract_bougouni2 <- mali_monthly_data_bougouni2 %>%
+  mutate(Actual_payout = ifelse(mali_monthly_data_bougouni2$Total_rain >= rain_at_zero_loss_bougouni2, 0, (rain_at_zero_loss_bougouni2 -mali_monthly_data_bougouni2$Total_rain) * payout_rate_bougouni2)) %>%
+  mutate(Actual_payout = ifelse(Actual_payout >= 100, 100, Actual_payout)) %>%
+  mutate(Payout_diff = abs(Actual_payout - Yield_loss)/100) %>%
+  mutate(Sat_index = SatisfactionIndex1(Payout_diff))
+
+glimpse(contract_bougouni2)
+
+sat_index_bougouni2 <- mean(contract_bougouni2$Sat_index)
+sat_index_bougouni2
+
+```
+$$y = -0.025x + 20.2957$$
+Using estimated yield
+
+```{r}
+
+mali_monthly_data_bougouni3 <- mali_monthly_data_bougouni %>%
+  mutate(Yield <- predict(loess(mali_monthly_data_bougouni$Yield~mali_monthly_data_bougouni$Total_rain)))
+
+mean_yield_bougouni3 <- mean(mali_monthly_data_bougouni3$Yield)
+
+mali_monthly_data_bougouni3$Yield_loss <- ifelse(mali_monthly_data_bougouni3$Yield >= mean_yield_bougouni3, 0, (mean_yield_bougouni3 - mali_monthly_data_bougouni3$Yield) / mean_yield_bougouni3*100)
+
+linear_mod_bougouni3 <- lm(Yield_loss~Total_rain, data = mali_monthly_data_bougouni3)
+#summary(linear_mod_bougouni3)
+plot(linear_mod_bougouni3)
+
+mod_res_bougouni1 = tidy(linear_mod_bougouni3) %>% 
+  mutate(Sig_at_95_CI = ifelse(p.value < 0.05, "Significant","Not significant"),
+       Sig_at_90_CI = ifelse(p.value < 0.1, "Significant","Not significant"),
+       estimate = round(estimate,2),
+         std.error = round(std.error,2),
+         statistic = round(statistic,2),
+         p.value = round(p.value,2)) %>% 
+  arrange(desc(Sig_at_95_CI)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_bougouni1,names(mod_res_bougouni1))
+
+mod_res_bougouni2 <- glance(linear_mod_bougouni3) %>%
+  transmute(r.squared = round(r.squared,2),
+            adj.r.squared = round(adj.r.squared,2)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_bougouni2,names(mod_res_bougouni2))
+
+plot_bougouni3 <- ggplot(mali_monthly_data_bougouni3, aes(x = Total_rain, y = Yield_loss)) +geom_point() + geom_smooth(method = "lm")
+plot_bougouni3
+
+
+# Contract evaluation
+
+intercept_bougouni3 <- linear_mod_bougouni3$coefficients[1]
+mod_coef_bougouni3 <- linear_mod_bougouni3$coefficients[2]
+
+rain_at_zero_loss_bougouni3 <- as.numeric(-intercept_bougouni3/mod_coef_bougouni3)
+rain_at_zero_loss_bougouni3
+
+rain_at_max_loss_bougouni3 <- mali_monthly_data_bougouni3$Total_rain[2]
+rain_at_max_loss_bougouni3
+  
+max_loss_bougouni3 <- as.numeric(mod_coef_bougouni3*rain_at_max_loss_bougouni3 + intercept_bougouni3)
+  
+payout_rate_bougouni3 <- 100/(rain_at_zero_loss_bougouni3 - rain_at_max_loss_bougouni3)
+payout_rate_bougouni3
+
+
+contract_bougouni3 <- mali_monthly_data_bougouni3 %>%
+  mutate(Actual_payout = ifelse(mali_monthly_data_bougouni3$Total_rain >= rain_at_zero_loss_bougouni3, 0, (rain_at_zero_loss_bougouni3 -mali_monthly_data_bougouni3$Total_rain) * payout_rate_bougouni3)) %>%
+  mutate(Actual_payout = ifelse(Actual_payout >= 100, 100, Actual_payout)) %>%
+  mutate(Payout_diff = abs(Actual_payout - Yield_loss)/ 100) %>%
+  mutate(Sat_index = SatisfactionIndex1(Payout_diff))
+
+glimpse(contract_bougouni3)
+
+sat_index_bougouni3 <- mean(contract_bougouni3$Sat_index)
+sat_index_bougouni3
+
+```
+
+Premium calculation
+```{r}
+
+Total_payout_bougouni <- sum(contract_bougouni$Actual_payout)
+Years_bougouni<- 23
+
+RiskPremium(Total_payout_bougouni, Years_bougouni)
+```
+
+
+### Koutiala
+```{r}
+
+mali_monthly_data_koutiala <- mali_monthly_data %>% filter(Stations == "Koutiala", between(Years, 1990,2013))
+dim(mali_monthly_data_koutiala)
+
+mean_yield_koutiala <- mean(mali_monthly_data_koutiala$Yield)
+
+mali_monthly_data_koutiala$Yield_loss <- ifelse(mali_monthly_data_koutiala$Yield >= mean_yield_koutiala, 0, (mean_yield_koutiala - mali_monthly_data_koutiala$Yield) / mean_yield_koutiala*100)
+
+linear_mod_koutiala <- lm(Yield_loss~Total_rain, data = mali_monthly_data_koutiala)
+summary(linear_mod_koutiala)
+plot(linear_mod_koutiala)
+
+mali_monthly_data_koutiala <- mali_monthly_data_koutiala[-c(2,11,15),]
+dim(mali_monthly_data_koutiala)
+
+linear_mod_koutiala <- lm(Yield_loss~Total_rain, data = mali_monthly_data_koutiala)
+plot(linear_mod_koutiala)
+
+plot_koutiala <- ggplot(mali_monthly_data_koutiala, aes(x = Total_rain, y = Yield_loss)) +geom_point() + geom_smooth(method = "lm")
+plot_koutiala
+
+mod_res_koutiala1 = tidy(linear_mod_koutiala) %>% 
+  mutate(Sig_at_95_CI = ifelse(p.value < 0.05, "Significant","Not significant"),
+       Sig_at_90_CI = ifelse(p.value < 0.1, "Significant","Not significant"),
+       estimate = round(estimate,2),
+         std.error = round(std.error,2),
+         statistic = round(statistic,2),
+         p.value = round(p.value,2)) %>% 
+  arrange(desc(Sig_at_95_CI)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_koutiala1,names(mod_res_koutiala1))
+
+mod_res_koutiala2 <- glance(linear_mod_koutiala) %>%
+  transmute(r.squared = round(r.squared,2),
+            adj.r.squared = round(adj.r.squared,2)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_koutiala2,names(mod_res_koutiala2))
+
+
+```
+
+### Sikasso
+```{r}
+
+
+mali_monthly_data_sikasso <- mali_monthly_data %>% filter(Stations == "Sikasso", between(Years, 1990,2013))
+dim(mali_monthly_data_sikasso)
+
+mean_yield_sikasso <- mean(mali_monthly_data_sikasso$Yield)
+
+mali_monthly_data_sikasso$Yield_loss <- ifelse(mali_monthly_data_sikasso$Yield >= mean_yield_sikasso, 0, (mean_yield_sikasso - mali_monthly_data_sikasso$Yield) / mean_yield_sikasso*100)
+
+linear_mod_sikasso <- lm(Yield_loss~Total_rain, data = mali_monthly_data_sikasso)
+summary(linear_mod_sikasso)
+plot(linear_mod_sikasso)
+
+mali_monthly_data_sikasso <- mali_monthly_data_sikasso[-c(1,4,5),]
+dim(mali_monthly_data_sikasso)
+
+linear_mod_sikasso <- lm(Yield_loss~Total_rain, data = mali_monthly_data_sikasso)
+plot(linear_mod_sikasso)
+
+plot_sikasso <- ggplot(mali_monthly_data_sikasso, aes(x = Total_rain, y = Yield_loss)) +geom_point() + geom_smooth(method = "lm")
+plot_sikasso
+
+mod_res_sikasso1 = tidy(linear_mod_sikasso) %>% 
+  mutate(Sig_at_95_CI = ifelse(p.value < 0.05, "Significant","Not significant"),
+       Sig_at_90_CI = ifelse(p.value < 0.1, "Significant","Not significant"),
+       estimate = round(estimate,2),
+         std.error = round(std.error,2),
+         statistic = round(statistic,2),
+         p.value = round(p.value,2)) %>% 
+  arrange(desc(Sig_at_95_CI)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_sikasso1,names(mod_res_sikasso1))
+
+mod_res_sikasso2 <- glance(linear_mod_sikasso) %>%
+  transmute(r.squared = round(r.squared,2),
+            adj.r.squared = round(adj.r.squared,2)) %>% as.data.frame()
+
+quickr::decorate_table(mod_res_sikasso2,names(mod_res_sikasso2))
+
+
+
+```
+
+# Multi-trigger Product
+
+## Read Excel files containing data
+```{r}
+
+mali_rf <-  read_xlsx("C:\\Users\\Ebimoboere Claudius\\Documents\\ICRISAT-MANOBI\\PLUIES.xlsx")
+#glimpse(mali_rf)
+
+#mali_rf <- mali_rf %>% gather(Day, Rain, One:ThirtyOne)
+
+phase1_start
+phase1_end
+
+
+phase2_start
+phase2_end
+
+
+phase3_start
+phase3_end
+
+
+ds_start
+ds_end
+
+
+er_start
+er_end
+
+#Monthly and decadal rainfall distribution plots for each sector
+
+```
+
+
+## Extract JJAS data for Bougouni
+```{r}
+#Bougouni StationID - 27016200
+
+mali_rf_bougouni <- mali_rf %>% filter(StationID == "27016200", between(Years, 1990,2013), between(Month, 6,9))
+dim(mali_rf_bougouni)
+
+mali_rf_bougouni2 <- mali_rf_bougouni %>% gather(Day, Rain, One:ThirtyOne)
+
+mali_rf_bougouni3 <- mali_rf_bougouni2 %>% arrange(Years,Month)
+#mali_rf_bougouni3 <- mali_rf_bougouni %>% mali_rf_bougouni$Day <- 1:31
+glimpse(mali_rf_bougouni3)
+
+
+#words_to_numbers("three billion")
+
+
+
+mali_rf_bougouni2 <- mali_rf_bougouni %>%
+  group_by(StationID,Years, Month) %>%
+  mutate(pivot_longer(-Month, cols = One:ThirtyOne, names_to = "Day", values_to = "Rain"))
+
+mali_rf_bougouni2 <- mali_rf_bougouni %>%
+  pivot_longer(mali_rf_bougouni, cols = One:ThirtyOne, names_to = "Day", values_to = "Rain")
+
+
+monthlyrf_bougouni <- mali_rf_bougouni %>%
+  mutate(Monthly_rain = select(., One:ThirtyOne) %>% apply(1, sum, na.rm = T))
+monthlyrf_bougouni <- monthlyrf_bougouni %>%
+  select(-One:-ThirtyOne) %>%
+  group_by(Years) %>% summarise(JJAS_rain = sum(Monthly_rain))
+
+#yield_bougouni <- mali_monthly_data_bougouni %>%
+ # select(Yield)
+
+monthlyrf_bougouni <- monthlyrf_bougouni %>%
+  mutate(Yield = mali_monthly_data_bougouni$Yield)
+
+#monthlyrf_bougouni$Yield <- yield_bougouni
+
+#single_phase_bougouni <- full_join(monthlyrf_bougouni,yield_bougouni, by = character())
+
+```
+
+## Extract JJAS data for Koutiala
+```{r}
+#Koutiala StationID - 27014400
+
+mali_rf_koutiala <- mali_rf %>% filter(StationID == "27014400", between(Years, 1990,2013), between(Month, 6,9))
+dim(mali_rf_koutiala)
+
+
+monthlyrf_koutiala <- mali_rf_koutiala %>%
+  mutate(Monthly_rain = select(., One:ThirtyOne) %>% apply(1, sum, na.rm = T))
+monthlyrf_koutiala <- monthlyrf_koutiala %>%
+  select(-One:-ThirtyOne) %>%
+  group_by(Years) %>% summarise(JJAS_rain = sum(Monthly_rain))
+
+#yield_koutiala <- mali_monthly_data_koutiala %>%
+ # select(Yield)
+
+monthlyrf_koutiala <- monthlyrf_koutiala %>%
+  mutate(Yield = mali_monthly_data_koutiala$Yield)
+
+#monthlyrf_koutiala$Yield <- yield_koutiala
+
+
+```
+## Extract JJAS data for Sikasso
+```{r}
+#Sikasso StationID - 27016500
+
+mali_rf_sikasso <- mali_rf %>% filter(StationID == "27016500", between(Years, 1990,2013), between(Month, 6,9))
+dim(mali_rf_sikasso)
+
+monthlyrf_sikasso <- mali_rf_sikasso %>%
+  mutate(Monthly_rain = select(., One:ThirtyOne) %>% apply(1, sum, na.rm = T))
+monthlyrf_sikasso <- monthlyrf_sikasso %>%
+  select(-One:-ThirtyOne) %>%
+  group_by(Years) %>% summarise(JJAS_rain = sum(Monthly_rain))
+
+#yield_sikasso <- mali_monthly_data_sikasso %>%
+ # select(Yield)
+
+monthlyrf_sikasso <- monthlyrf_sikasso %>%
+  mutate(Yield = mali_monthly_data_sikasso$Yield)
+
+#monthlyrf_sikasso$Yield <- yield_sikasso
+
+```
+
+Test
+```{r}
+
+mali_rf_sector <- mali_rf %>% filter(StationID == "270167", between(year, 1990,2013), between(Month, 6,9))
+dim(mali_rf_sector)
+```
+
