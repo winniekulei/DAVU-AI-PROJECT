@@ -1,9 +1,9 @@
 ### `README.md`
 
-# Climate Data Analysis Project
+# WII Analysis Project
 
 ## Overview
-This project analyzes climate data from various sectors in Bougouni, Koutiala, and Sikasso regions. The primary goal is to clean the raw data, perform analysis, and visualize the results to understand climate patterns and trends.
+This project analyzes climate data from various sectors in Bougouni, Koutiala, and Sikasso regions. The primary goal is to clean the raw data, perform analysis, and visualize the results to understand their effects on Yield in these three sectors. We formulate a model that factors in satisfaction index that seeks to measure the basis risk. The primary goal is to reduce basis risk in small holder farmers in the regions.
 
 ## Data Files
 The raw data files used in this project are in Excel format (.xlsx):
@@ -11,7 +11,7 @@ The raw data files used in this project are in Excel format (.xlsx):
 - `KoutialaSector_Average_JJA.xlsx`
 - `SikassoSector_Average_JJA.xlsx`
 
-These files contain average climate data for the JJA (June, July, August) months across the respective sectors.
+These files contain average climate data for various months across the respective sectors.
 
 ## Directory Structure
 ```
